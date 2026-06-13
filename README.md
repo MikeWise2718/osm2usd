@@ -120,8 +120,15 @@ osm2usd/
 └── tests/               ← offline: tiny OSM JSON + synthetic DEM
 ```
 
-The `src/osm2usd/` modules are scaffolded per the spec's task tracker; see
-[`specs/osm2usd.md`](specs/osm2usd.md) for current status.
+The full `src/osm2usd/` pipeline is implemented and covered by an offline test
+suite (`tests/` — 27 tests against a committed tiny synthetic DEM + tiny OSM
+JSON). See [`specs/osm2usd.md`](specs/osm2usd.md) for the task tracker; the next
+step is running it on real Messel data and wiring the messelpit overlay.
+
+```bash
+uv venv && uv pip install -e . pytest
+.venv/Scripts/python -m pytest -q
+```
 
 ## Related repos
 

@@ -99,4 +99,23 @@ Consumed by scene repos as an editable/path install (`uv pip install -e ../osm2u
 ## Status
 
 See the task tracker at the bottom of [`specs/osm2usd.md`](specs/osm2usd.md).
-Task 1 (repo scaffold) done; the `src/osm2usd/` modules (tasks 2–8) are next.
+Tasks 1–8 done: the full `src/osm2usd/` pipeline
+(`project`/`drape`/`geometry`/`group`/`materials`/`build`/`cli`) is implemented
+and covered by 27 offline tests (a committed tiny synthetic DEM + tiny OSM JSON
+under `tests/fixtures/`). The CLI builds a valid spec-shaped stage end to end.
+
+Next up: **task 9** — run on the real Messel `messel_osm.json` + `dem.tif` and
+eyeball in usdview (this is the first validation against the actual overpy JSON
+field shapes — the parser is tolerant but unverified against real data). Then
+**tasks 10–12**, the messelpit integration.
+
+### Running the tests
+
+```bash
+uv venv && uv pip install -e . pytest
+.venv/Scripts/python -m pytest -q          # 27 tests, all offline
+```
+
+Fixtures are regenerable with `python tests/fixtures/make_fixtures.py` (rewrites
+`tiny_dem.tif` + `origin.json`; `tiny_osm.json` is hand-authored so its lat/lons
+land at known local-meter coords).
