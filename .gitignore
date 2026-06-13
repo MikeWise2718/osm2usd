@@ -1,0 +1,23 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.uv/
+
+# Test / build artifacts
+out/
+*.usd
+*.usda
+*.usdc
+*.usdz
+!tests/fixtures/**/*.usda
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
