@@ -1,0 +1,8 @@
+{
+  "epsg": 25832,
+  "utm_sw_easting": 480000.0,
+  "utm_sw_northing": 5526000.0,
+  "width_m": 100.0,
+  "height_m": 100.0,
+  "dem_resolution_m": 1.0
+}

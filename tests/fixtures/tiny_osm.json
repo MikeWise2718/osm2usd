@@ -1,0 +1,50 @@
+{
+  "area": "fixture",
+  "class_groups": {
+    "Roads": ["street", "hwother"],
+    "Buildings": ["office", "bldother"]
+  },
+  "ways": [
+    {
+      "thing": "building",
+      "type": "office",
+      "class_group": "office",
+      "closed": true,
+      "height_m": 12.0,
+      "levels": null,
+      "nodes": [
+        [49.88615370, 8.72172774],
+        [49.88615470, 8.72214535],
+        [49.88642453, 8.72214380],
+        [49.88642352, 8.72172619],
+        [49.88615370, 8.72172774]
+      ]
+    },
+    {
+      "thing": "building",
+      "type": "house",
+      "class_group": "bldother",
+      "closed": true,
+      "height_m": null,
+      "levels": 3,
+      "nodes": [
+        [49.88615370, 8.72172774],
+        [49.88615470, 8.72214535],
+        [49.88642352, 8.72172619]
+      ]
+    },
+    {
+      "thing": "road",
+      "type": "residential",
+      "class_group": "street",
+      "closed": false,
+      "height_m": null,
+      "levels": null,
+      "nodes": [
+        [49.88642352, 8.72172619],
+        [49.88642453, 8.72214380],
+        [49.88660374, 8.72186436]
+      ]
+    }
+  ]
+}

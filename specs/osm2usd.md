@@ -234,13 +234,13 @@ repos are local.
 | # | Task | Repo | Status |
 |---|------|------|--------|
 | 1 | Create `osm2usd` repo (pyproject/uv, README, CLAUDE.md, git+remote) | osm2usd | ☑ |
-| 2 | `project.py` — lat/lon → local meters (pyproj), origin-relative | osm2usd | ☐ |
-| 3 | `drape.py` — DEM sampler matching prep_rasters local frame | osm2usd | ☐ |
-| 4 | `geometry.py` — footprint ear-clip + road ribbon extrude | osm2usd | ☐ |
-| 5 | `group.py` — /World/OSM/{Roads,Buildings}/{class} authoring | osm2usd | ☐ |
-| 6 | `materials.py` — per-class UsdPreviewSurface (RTX-correct wiring) | osm2usd | ☐ |
-| 7 | `build.py` + `cli.py` — orchestration + argparse/rich entry | osm2usd | ☐ |
-| 8 | Tests: synthetic DEM + tiny JSON, offline; projection/drape/grouping | osm2usd | ☐ |
+| 2 | `project.py` — lat/lon → local meters (pyproj), origin-relative | osm2usd | ☑ |
+| 3 | `drape.py` — DEM sampler matching prep_rasters local frame | osm2usd | ☑ |
+| 4 | `geometry.py` — footprint ear-clip + road ribbon extrude | osm2usd | ☑ |
+| 5 | `group.py` — /World/OSM/{Roads,Buildings}/{class} authoring | osm2usd | ☑ |
+| 6 | `materials.py` — per-class UsdPreviewSurface (RTX-correct wiring) | osm2usd | ☑ |
+| 7 | `build.py` + `cli.py` — orchestration + argparse/rich entry | osm2usd | ☑ |
+| 8 | Tests: synthetic DEM + tiny JSON, offline; projection/drape/grouping | osm2usd | ☑ |
 | 9 | Run on real Messel JSON + dem.tif; eyeball in usdview | osm2usd→messelpit | ☐ |
 | 10 | messelpit: commit messel_osm.json + build_osm_overlay step | messelpit | ☐ |
 | 11 | messelpit: reference messel_osm.usd under /World/OSM of messel_lo | messelpit | ☐ |
