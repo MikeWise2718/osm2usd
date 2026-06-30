@@ -120,8 +120,10 @@ def test_flat_sampler_path(osm_json, origin_json, tmp_path):
     assert zs == [0.0, 12.0]  # flat base, extruded by height_m
 
 
-def test_points_become_waterhole_markers(osm_json, origin_json, dem_tif, tmp_path):
-    """A borehole point yields /World/OSM/Water/waterhole, draped + blue."""
+def test_points_become_named_waterhole_markers(osm_json, origin_json, dem_tif, tmp_path):
+    """A borehole point yields its OWN named prim under /World/OSM/Water/waterhole/,
+    draped + blue, carrying the name + base_z as customData (for tooltips +
+    re-basing under exaggeration)."""
     from pxr import UsdShade
 
     data = load_osm_json(osm_json)
@@ -140,15 +142,42 @@ def test_points_become_waterhole_markers(osm_json, origin_json, dem_tif, tmp_pat
     assert res.n_points == 1
 
     stage = Usd.Stage.Open(str(out))
-    wh = stage.GetPrimAtPath("/World/OSM/Water/waterhole")
-    assert wh.IsValid()
-    mesh = UsdGeom.Mesh(wh)
+    # The class group is now a Scope holding individually named markers.
+    grp = stage.GetPrimAtPath("/World/OSM/Water/waterhole")
+    assert grp.IsValid()
+    children = grp.GetChildren()
+    assert len(children) == 1
+    marker = children[0]
+    assert marker.GetName() == "TestHole"           # OSM name -> prim name
+    # ':' nests under an 'osm2usd' sub-dict (same as osm2usd:version).
+    cd = marker.GetCustomData()["osm2usd"]
+    assert cd["name"] == "TestHole"
+    assert abs(cd["base_z"] - 102.0) < 1e-3          # draped DEM z at x~20
+
+    mesh = UsdGeom.Mesh(marker)
     zs = sorted({round(p[2], 2) for p in mesh.GetPointsAttr().Get()})
-    # draped base (DEM z at x~20 -> 100+20*0.1=102) + marker height 8.
-    assert zs[0] == 102.0 and zs[-1] == 110.0
-    # blue material bound + connected surface.
-    binding = UsdShade.MaterialBindingAPI(wh).GetDirectBinding()
+    assert zs[0] == 102.0 and zs[-1] == 110.0       # base + marker height 8
+    binding = UsdShade.MaterialBindingAPI(marker).GetDirectBinding()
     assert binding.GetMaterial().GetPrim().IsValid()
+
+
+def test_duplicate_point_names_disambiguated(osm_json, origin_json, dem_tif, tmp_path):
+    """Many Kgalagadi holes share names; each must still get a unique prim."""
+    data = load_osm_json(osm_json)
+    data["points"] = [
+        {"name": "Twin", "kind": "borehole", "lat": 49.88660374, "lng": 8.72186436},
+        {"name": "Twin", "kind": "borehole", "lat": 49.88642453, "lng": 8.72214380},
+    ]
+    out = tmp_path / "dup_osm.usd"
+    res = build_stage(
+        data, Origin.from_json(origin_json),
+        DemSampler.from_tif(dem_tif), out, BuildOptions(),
+    )
+    assert res.n_points == 2
+    stage = Usd.Stage.Open(str(out))
+    names = {c.GetName() for c in
+             stage.GetPrimAtPath("/World/OSM/Water/waterhole").GetChildren()}
+    assert len(names) == 2   # collision-disambiguated
 
 
 def test_points_cropped_outside_dem(osm_json, origin_json, dem_tif, tmp_path):
