@@ -21,12 +21,18 @@ LEVEL_HEIGHT_DEFAULT = 3.0
 DEFAULT_BLD_HEIGHT = 6.0
 
 
+MARKER_RADIUS_DEFAULT = 1000.0   # meters; oversized so points show at scene scale
+MARKER_HEIGHT_DEFAULT = 2000.0
+
+
 @dataclass
 class BuildOptions:
     default_height: float = DEFAULT_BLD_HEIGHT
     level_height: float = LEVEL_HEIGHT_DEFAULT
     road_width_scale: float = 1.0
     crop_to_dem: bool = False  # split roads / drop buildings outside the DEM bbox
+    marker_radius: float = MARKER_RADIUS_DEFAULT  # point-marker footprint radius (m)
+    marker_height: float = MARKER_HEIGHT_DEFAULT  # point-marker pillar height (m)
 
 
 @dataclass
@@ -34,8 +40,9 @@ class BuildResult:
     out_path: Path
     n_buildings: int = 0
     n_roads: int = 0
+    n_points: int = 0    # point markers emitted (e.g. waterholes)
     n_skipped: int = 0
-    n_cropped: int = 0   # ways dropped entirely as outside the DEM (crop_to_dem)
+    n_cropped: int = 0   # ways/points dropped entirely as outside the DEM (crop_to_dem)
     per_class: dict[str, int] = field(default_factory=dict)
     z_min: float = float("inf")
     z_max: float = float("-inf")
@@ -68,6 +75,18 @@ def _way_nodes(way: dict) -> list[tuple[float, float]]:
     return out
 
 
+def _point_class(pt: dict) -> str:
+    """Class-group bucket for an overpy point. Boreholes/wells/springs/water
+    points all bucket to 'waterhole' (blue marker, /World/OSM/Water/waterhole);
+    anything else falls back to a generic 'point'."""
+    kind = (pt.get("kind") or "").lower()
+    water_kinds = {
+        "borehole", "well", "water_well", "spring", "waterhole",
+        "drinking_water", "water_point", "pond", "dam",
+    }
+    return "waterhole" if kind in water_kinds else "point"
+
+
 def build_stage(
     osm_json: dict,
     origin: Origin,
@@ -81,12 +100,15 @@ def build_stage(
     result = BuildResult(out_path=out_path)
     result.used_dem = isinstance(sampler, DemSampler)
 
-    # Accumulate geometry per (family, class_group). family is "Roads" or
-    # "Buildings"; the class_group bucket name comes straight from the data.
+    # Accumulate geometry per (family, class_group). family is "Roads",
+    # "Buildings", or "Water"; the class_group bucket name comes from the data.
     road_acc: dict[str, geometry.MeshAccumulator] = defaultdict(
         geometry.MeshAccumulator
     )
     bld_acc: dict[str, geometry.MeshAccumulator] = defaultdict(
+        geometry.MeshAccumulator
+    )
+    water_acc: dict[str, geometry.MeshAccumulator] = defaultdict(
         geometry.MeshAccumulator
     )
 
@@ -148,7 +170,29 @@ def build_stage(
             else:
                 result.n_skipped += 1
 
-    _author(out_path, origin, road_acc, bld_acc, result)
+    # Points -> draped markers (e.g. waterholes/boreholes). overpy points carry
+    # {name, kind, lat, lng}; class group derives from `kind` (borehole/well/
+    # spring/... -> "waterhole"). Markers are oversized navigation pins.
+    for pt in osm_json.get("points", []):
+        try:
+            lat = float(pt["lat"])
+            lon = float(pt.get("lng", pt.get("lon")))
+        except (KeyError, TypeError, ValueError):
+            result.n_skipped += 1
+            continue
+        x, y = projector.project(lat, lon)
+        if crop_box is not None and not crop._inside((x, y), crop_box[0], crop_box[1]):
+            result.n_cropped += 1
+            continue
+        cls = _point_class(pt)
+        base = sampler.sample(x, y)
+        if geometry.add_marker(
+            water_acc[cls], x, y, base, opts.marker_radius, opts.marker_height
+        ):
+            result.n_points += 1
+            _track_z(result, [base, base + opts.marker_height])
+
+    _author(out_path, origin, road_acc, bld_acc, water_acc, result)
     result.pct_off_dem = sampler.stats.pct_clamped
     if result.z_min == float("inf"):
         result.z_min = result.z_max = 0.0
@@ -163,13 +207,13 @@ def _track_z(result: BuildResult, zs: list[float]) -> None:
             result.z_max = z
 
 
-def _author(out_path, origin, road_acc, bld_acc, result) -> None:
+def _author(out_path, origin, road_acc, bld_acc, water_acc, result) -> None:
     stage = Usd.Stage.CreateNew(str(out_path))
     stage.SetMetadata("metersPerUnit", 1.0)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     stage.SetDefaultPrim(stage.DefinePrim("/World", "Xform"))
 
-    osm_root, roads_path, blds_path = group.ensure_scopes(stage)
+    osm_root, roads_path, blds_path, water_path = group.ensure_scopes(stage)
     osm_prim = stage.GetPrimAtPath(osm_root)
     osm_prim.SetCustomDataByKey("osm2usd:version", __version__)
     osm_prim.SetCustomDataByKey("osm2usd:origin", _origin_customdata(origin))
@@ -180,6 +224,7 @@ def _author(out_path, origin, road_acc, bld_acc, result) -> None:
     for family, accs, parent in (
         ("Roads", road_acc, roads_path),
         ("Buildings", bld_acc, blds_path),
+        ("Water", water_acc, water_path),
     ):
         for cls, acc in sorted(accs.items()):
             prim = group.define_group_mesh(stage, parent, cls, acc)

@@ -52,8 +52,13 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="global multiplier on per-class ribbon widths")
     b.add_argument("-cd", "--crop-to-dem", action="store_true",
                    help="clip geometry to the DEM bbox: split roads at the "
-                        "boundary and drop buildings outside it (avoids "
+                        "boundary and drop buildings/points outside it (avoids "
                         "edge-clamp streaks from ways that trail off-scene)")
+    b.add_argument("-mr", "--marker-radius", type=float, default=1000.0,
+                   help="point-marker footprint radius m (default 1000; "
+                        "oversized so points show at scene scale)")
+    b.add_argument("-mh", "--marker-height", type=float, default=2000.0,
+                   help="point-marker pillar height m (default 2000)")
     return p
 
 
@@ -74,6 +79,8 @@ def _summary(console: Console, result, out_path: Path) -> None:
     table.add_column()
     table.add_row("Buildings", f"{result.n_buildings:,}")
     table.add_row("Roads", f"{result.n_roads:,}")
+    if result.n_points:
+        table.add_row("Points (markers)", f"{result.n_points:,}")
     if result.n_skipped:
         table.add_row("Skipped ways", f"{result.n_skipped:,}")
     if result.n_cropped:
@@ -117,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
             level_height=args.level_height,
             road_width_scale=args.road_width_scale,
             crop_to_dem=args.crop_to_dem,
+            marker_radius=args.marker_radius,
+            marker_height=args.marker_height,
         )
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)

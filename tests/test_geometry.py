@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from osm2usd.geometry import (
+    MARKER_SIDES,
     MeshAccumulator,
     add_building,
+    add_marker,
     add_road_ribbon,
     ear_clip,
     signed_area,
@@ -67,3 +69,21 @@ def test_road_ribbon_width():
 def test_road_ribbon_needs_two_points():
     acc = MeshAccumulator()
     assert not add_road_ribbon(acc, [(0, 0, 0)], 4.0)
+
+
+def test_marker_is_octagonal_pillar_draped():
+    acc = MeshAccumulator()
+    assert add_marker(acc, x=100.0, y=200.0, base_z=50.0, radius=10.0, height=30.0)
+    # All faces are triangles (RTX-safe).
+    assert all(c == 3 for c in acc.face_vertex_counts)
+    # cap fan (sides-2 tris) + walls (2 tris/side).
+    expected = (MARKER_SIDES - 2) + 2 * MARKER_SIDES
+    assert len(acc.face_vertex_counts) == expected
+    zs = sorted({round(p[2], 3) for p in acc.points})
+    assert zs == [50.0, 80.0]          # base_z and base_z+height
+    # Footprint centered on (x,y) within radius.
+    xs = [p[0] for p in acc.points]
+    ys = [p[1] for p in acc.points]
+    assert abs((min(xs) + max(xs)) / 2 - 100.0) < 1e-6
+    assert abs((min(ys) + max(ys)) / 2 - 200.0) < 1e-6
+    assert max(xs) - 100.0 <= 10.0 + 1e-6   # within radius

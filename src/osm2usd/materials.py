@@ -33,6 +33,8 @@ PALETTE: dict[str, tuple[float, float, float]] = {
     "religion": (0.55, 0.45, 0.65),
     "ruin": (0.50, 0.45, 0.40),
     "bldother": (0.60, 0.60, 0.62),
+    # water / points -- saturated blue so waterhole markers pop against terrain.
+    "waterhole": (0.10, 0.45, 0.90),
 }
 DEFAULT_COLOR = (0.6, 0.6, 0.6)
 

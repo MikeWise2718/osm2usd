@@ -106,3 +106,52 @@ def test_flat_sampler_path(osm_json, origin_json, tmp_path):
     office = UsdGeom.Mesh(stage.GetPrimAtPath("/World/OSM/Buildings/office"))
     zs = sorted({round(p[2], 2) for p in office.GetPointsAttr().Get()})
     assert zs == [0.0, 12.0]  # flat base, extruded by height_m
+
+
+def test_points_become_waterhole_markers(osm_json, origin_json, dem_tif, tmp_path):
+    """A borehole point yields /World/OSM/Water/waterhole, draped + blue."""
+    from pxr import UsdShade
+
+    data = load_osm_json(osm_json)
+    # A point at a fixture lat/lon known to land inside the 100x100 DEM
+    # (the fixture's KNOWN table maps this near local (20,60)).
+    data["points"] = [
+        {"name": "TestHole", "kind": "borehole",
+         "lat": 49.88660374, "lng": 8.72186436},
+    ]
+    out = tmp_path / "pts_osm.usd"
+    res = build_stage(
+        data, Origin.from_json(origin_json),
+        DemSampler.from_tif(dem_tif), out,
+        BuildOptions(marker_radius=5.0, marker_height=8.0),
+    )
+    assert res.n_points == 1
+
+    stage = Usd.Stage.Open(str(out))
+    wh = stage.GetPrimAtPath("/World/OSM/Water/waterhole")
+    assert wh.IsValid()
+    mesh = UsdGeom.Mesh(wh)
+    zs = sorted({round(p[2], 2) for p in mesh.GetPointsAttr().Get()})
+    # draped base (DEM z at x~20 -> 100+20*0.1=102) + marker height 8.
+    assert zs[0] == 102.0 and zs[-1] == 110.0
+    # blue material bound + connected surface.
+    binding = UsdShade.MaterialBindingAPI(wh).GetDirectBinding()
+    assert binding.GetMaterial().GetPrim().IsValid()
+
+
+def test_points_cropped_outside_dem(osm_json, origin_json, dem_tif, tmp_path):
+    data = load_osm_json(osm_json)
+    # Far outside the DEM (way north) -> cropped, not clamped.
+    data["points"] = [
+        {"name": "FarHole", "kind": "borehole", "lat": 50.5, "lng": 8.72186436},
+    ]
+    out = tmp_path / "croppts_osm.usd"
+    res = build_stage(
+        data, Origin.from_json(origin_json),
+        DemSampler.from_tif(dem_tif), out,
+        BuildOptions(crop_to_dem=True),
+    )
+    assert res.n_points == 0
+    assert res.n_cropped >= 1
+    stage = Usd.Stage.Open(str(out))
+    assert not stage.GetPrimAtPath("/World/OSM/Water/waterhole").IsValid()
