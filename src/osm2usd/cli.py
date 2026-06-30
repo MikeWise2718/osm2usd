@@ -50,6 +50,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="meters per building level (default 3)")
     b.add_argument("-rw", "--road-width-scale", type=float, default=1.0,
                    help="global multiplier on per-class ribbon widths")
+    b.add_argument("-cd", "--crop-to-dem", action="store_true",
+                   help="clip geometry to the DEM bbox: split roads at the "
+                        "boundary and drop buildings outside it (avoids "
+                        "edge-clamp streaks from ways that trail off-scene)")
     return p
 
 
@@ -72,6 +76,8 @@ def _summary(console: Console, result, out_path: Path) -> None:
     table.add_row("Roads", f"{result.n_roads:,}")
     if result.n_skipped:
         table.add_row("Skipped ways", f"{result.n_skipped:,}")
+    if result.n_cropped:
+        table.add_row("Cropped (off-DEM)", f"{result.n_cropped:,}")
     table.add_row("Z range", f"{result.z_min:.1f} .. {result.z_max:.1f} m")
     table.add_row("Off-DEM (clamped)", f"{result.pct_off_dem:.1f}%")
     table.add_row("DEM draping", "yes" if result.used_dem else "NO (flat z=0)")
@@ -110,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             default_height=args.default_height,
             level_height=args.level_height,
             road_width_scale=args.road_width_scale,
+            crop_to_dem=args.crop_to_dem,
         )
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)

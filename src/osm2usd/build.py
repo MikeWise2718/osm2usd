@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pxr import Usd, UsdGeom, Vt
 
-from . import __version__, geometry, group, materials
+from . import __version__, crop, geometry, group, materials
 from .drape import DemSampler, FlatSampler
 from .project import MODE_DEGREE_GRID, Origin, make_projector
 
@@ -26,6 +26,7 @@ class BuildOptions:
     default_height: float = DEFAULT_BLD_HEIGHT
     level_height: float = LEVEL_HEIGHT_DEFAULT
     road_width_scale: float = 1.0
+    crop_to_dem: bool = False  # split roads / drop buildings outside the DEM bbox
 
 
 @dataclass
@@ -34,6 +35,7 @@ class BuildResult:
     n_buildings: int = 0
     n_roads: int = 0
     n_skipped: int = 0
+    n_cropped: int = 0   # ways dropped entirely as outside the DEM (crop_to_dem)
     per_class: dict[str, int] = field(default_factory=dict)
     z_min: float = float("inf")
     z_max: float = float("-inf")
@@ -88,6 +90,12 @@ def build_stage(
         geometry.MeshAccumulator
     )
 
+    # When cropping, clip to the DEM rectangle in local meters (only meaningful
+    # with a real DEM; FlatSampler has no bounds).
+    crop_box = None
+    if opts.crop_to_dem and isinstance(sampler, DemSampler):
+        crop_box = sampler.max_xy
+
     ways = osm_json.get("ways", [])
     for way in ways:
         latlons = _way_nodes(way)
@@ -99,17 +107,38 @@ def build_stage(
         cls = way.get("class_group") or "unknown"
 
         if group.is_road(thing):
-            zs = sampler.sample_many(xy)
-            xyz = [(x, y, z) for (x, y), z in zip(xy, zs)]
             width = group.road_width(cls, opts.road_width_scale)
-            if geometry.add_road_ribbon(road_acc[cls], xyz, width):
+            # Crop a road into the in-DEM runs (each becomes its own ribbon) so
+            # tails outside the scene aren't drawn as streaks to the edge.
+            runs = (
+                crop.crop_polyline(xy, crop_box[0], crop_box[1])
+                if crop_box is not None
+                else [xy]
+            )
+            if not runs:
+                result.n_cropped += 1
+                continue
+            emitted_any = False
+            for run in runs:
+                zs = sampler.sample_many(run)
+                xyz = [(x, y, z) for (x, y), z in zip(run, zs)]
+                if geometry.add_road_ribbon(road_acc[cls], xyz, width):
+                    emitted_any = True
+                    _track_z(result, zs)
+            if emitted_any:
                 result.n_roads += 1
-                _track_z(result, zs)
             else:
                 result.n_skipped += 1
         else:  # building
             if not way.get("closed", True) or len(xy) < 3:
                 result.n_skipped += 1
+                continue
+            # Drop buildings that aren't fully inside the DEM (a partial
+            # footprint is meaningless; buildings are small).
+            if crop_box is not None and not crop.building_inside(
+                xy, crop_box[0], crop_box[1]
+            ):
+                result.n_cropped += 1
                 continue
             base = sampler.base_z(xy)
             height = building_height(way, opts)
