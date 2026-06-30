@@ -15,7 +15,7 @@ from pxr import Usd, UsdGeom, Vt
 
 from . import __version__, geometry, group, materials
 from .drape import DemSampler, FlatSampler
-from .project import Origin, Projector
+from .project import MODE_DEGREE_GRID, Origin, make_projector
 
 LEVEL_HEIGHT_DEFAULT = 3.0
 DEFAULT_BLD_HEIGHT = 6.0
@@ -75,7 +75,7 @@ def build_stage(
 ) -> BuildResult:
     """Build the USD stage from parsed OSM JSON + origin + DEM sampler."""
     out_path = Path(out_path)
-    projector = Projector(origin)
+    projector = make_projector(origin)
     result = BuildResult(out_path=out_path)
     result.used_dem = isinstance(sampler, DemSampler)
 
@@ -143,11 +143,7 @@ def _author(out_path, origin, road_acc, bld_acc, result) -> None:
     osm_root, roads_path, blds_path = group.ensure_scopes(stage)
     osm_prim = stage.GetPrimAtPath(osm_root)
     osm_prim.SetCustomDataByKey("osm2usd:version", __version__)
-    osm_prim.SetCustomDataByKey(
-        "osm2usd:origin",
-        {"epsg": origin.epsg, "easting": origin.easting,
-         "northing": origin.northing},
-    )
+    osm_prim.SetCustomDataByKey("osm2usd:origin", _origin_customdata(origin))
 
     UsdGeom.Scope.Define(stage, "/World/OSM/Materials")
     overlay_paths: list[str] = []
@@ -175,6 +171,22 @@ def _author(out_path, origin, road_acc, bld_acc, result) -> None:
     )
 
     stage.GetRootLayer().Save()
+
+
+def _origin_customdata(origin: Origin) -> dict:
+    """Mode-aware origin record stamped on /World/OSM (only the active mode's
+    fields, so a degree-grid build doesn't claim a null epsg/easting)."""
+    if origin.mode == MODE_DEGREE_GRID:
+        return {
+            "mode": origin.mode,
+            "sw_lon": origin.sw_lon, "sw_lat": origin.sw_lat,
+            "extent_w_deg": origin.extent_w_deg, "extent_h_deg": origin.extent_h_deg,
+            "width_m": origin.width_m, "height_m": origin.height_m,
+        }
+    return {
+        "mode": origin.mode,
+        "epsg": origin.epsg, "easting": origin.easting, "northing": origin.northing,
+    }
 
 
 def load_osm_json(path: str | Path) -> dict:

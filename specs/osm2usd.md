@@ -82,11 +82,34 @@ rasterio.warp also works if pyproj is unavailable.
 > Do **not** use overpy's `ll2xz` — it's an untrustworthy OLS fit (noted
 > in the overpy spec). osm2usd does the real projection.
 
+#### Two scene frames (`origin.mode`, auto-detected)
+
+`Origin.from_json` detects the frame from the origin.json keys, and
+`make_projector(origin)` returns the matching projector:
+
+- **`utm`** (Messel) — `epsg` + `utm_sw_easting` + `utm_sw_northing`. The
+  pyproj path above (`UtmProjector`). Unchanged.
+- **`degree_grid`** (Kalahari) — `extent_deg` + `width_m` + `height_m`
+  (+ optional `sw_lon`/`sw_lat`). The terrain is a *geographic* raster, not
+  a metric projection, so local meters are a **linear deg→m remap** of the
+  extent box (`DegreeGridProjector`, no pyproj):
+
+  ```
+  x = (lon - sw_lon) / extent_w_deg * width_m
+  y = (lat - sw_lat) / extent_h_deg * height_m     # +Y north (lat up)
+  ```
+
+  This is the exact inverse of `build_grid_mesh`'s `px = col*res_x`,
+  `py = (H-1-row)*res_y`. Nodes west/south of the SW corner get negative
+  local coords (no clamp at projection time — only the DEM sampler clamps).
+
 ### 2. Drape onto the DEM
 
 For each projected vertex `(x, y)`:
-- Map to DEM pixel: `col = round(x / res)`, `row = (H-1) - round(y / res)`
-  (inverse of `build_grid_mesh`'s mapping).
+- Map to DEM pixel: `col = round(x / res_x)`, `row = (H-1) - round(y / res_y)`
+  (inverse of `build_grid_mesh`'s mapping). **`res_x` and `res_y` are
+  per-axis** (read from the GeoTIFF transform's `a`/`e`): square for Messel
+  (1 m), anisotropic for Kalahari's degree grid (~5.04 m X / ~5.54 m Y).
 - `z = dem[row, col]` (clamp to bounds; nodes outside the DEM bbox →
   clamp to edge or drop, log either way — see open questions).
 - **Roads:** sample z **per vertex** so ribbons follow undulation.
@@ -241,16 +264,37 @@ repos are local.
 | 6 | `materials.py` — per-class UsdPreviewSurface (RTX-correct wiring) | osm2usd | ☑ |
 | 7 | `build.py` + `cli.py` — orchestration + argparse/rich entry | osm2usd | ☑ |
 | 8 | Tests: synthetic DEM + tiny JSON, offline; projection/drape/grouping | osm2usd | ☑ |
-| 9 | Run on real Messel JSON + dem.tif; eyeball in usdview | osm2usd→messelpit | ☐ |
-| 10 | messelpit: commit messel_osm.json + build_osm_overlay step | messelpit | ☐ |
-| 11 | messelpit: reference messel_osm.usd under /World/OSM of messel_lo | messelpit | ☐ |
+| 9 | Run on real Messel JSON + dem.tif; eyeball in usdview | osm2usd→messelpit | ☑ ran; 2104 blds + 1206 roads, draped Z 104–233 m, 3.4% off-DEM clamped |
+| 10 | messelpit: commit messel_osm.json + build_osm_overlay step | messelpit | ☑ data/messel_osm.json + tools/build_osm_overlay.ps1 + src/messelpit/build_overlay_stage.py |
+| 11 | messelpit: reference messel_osm.usd under /World/OSM of messel_lo (wrapper) | messelpit | ☑ out/messel_lo_with_osm.usd; verified (17 meshes, /World/{Terrain,OSM}) |
 | 12 | messelpit + osm2usd README/CLAUDE updates | both | ☐ |
 | 13 | (later) Kalahari: its origin.json + DEM + same osm2usd call | kalahari | ☐ |
+| 14 | Eyeball in usdview / the USD viewer (visual QA — not yet done headless-only) | — | ☐ |
+| 15 | usd_viewer: build the visibility tab + Messel sidecar (separate spec) | usd_viewer | ☐ |
+
+### Notes from the first real run (2026-06-13)
+
+- **overpy 406 fix (in overpy repo):** `overpass-api.de` now rejects
+  requests with no User-Agent (HTTP 406); overpy 0.7 sends none. Fixed by
+  installing a global urllib opener with a UA in
+  `overpy/src/overpy_processor/core/osm_query.py`. Added a `messel`
+  scenario to `overpy/osmscenarios/scenarios.json` (bbox = origin.json
+  WGS84 corners, `subgroup: "all"`). overpy then exported 3310 ways
+  (2104 buildings + 1206 roads, 14763 nodes, 2.1 MB).
+- **No `height` tags on Messel buildings** — all use `building:levels` or
+  the default; the `levels × level_height` fallback carries placement.
+- **Composition = wrapper stage (DECIDED).** `messel_lo_with_osm.usd`
+  references the untouched `messel_lo.usd` + `messel_osm.usd` onto one
+  `/World`. Base file never edited.
 
 ## Open questions (resolve at implementation)
 
-- **Composition:** reference vs. wrapper-stage sublayer (leaning reference).
-- **Off-DEM nodes:** clamp to edge vs. drop vs. flat-z (leaning clamp + warn).
+- **Off-DEM spill:** OSM bbox X/Y runs −1750..7778 × −849..9676 vs. the
+  terrain's 0..6000 × 0..9000 — the 3.4% off-DEM ways sit at/beyond the
+  bbox edge (clamped in Z, real X/Y kept), so some overlay hangs past the
+  terrain. Options: a `--crop-to-dem` flag in osm2usd, tighten the overpy
+  query bbox, or accept the spill. (Was "clamp to edge vs drop vs flat-z";
+  clamp is what shipped, but the X/Y spill is the visible side effect.)
 - **Building base z:** min vs. mean of footprint samples (leaning min, so
   no corner floats above ground; revisit on sloped sites).
 - **Road geometry:** flat ribbons vs. BasisCurves (leaning ribbons).

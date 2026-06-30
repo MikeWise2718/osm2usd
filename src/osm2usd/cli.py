@@ -34,7 +34,8 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument("-o", "--out", required=True, metavar="PATH",
                    help="output *_osm.usd (required)")
     b.add_argument("-or", "--origin", metavar="PATH",
-                   help="origin.json (epsg + sw easting/northing)")
+                   help="origin.json (UTM: epsg + utm_sw_easting/northing; "
+                        "or degree grid: extent_deg + width_m + height_m)")
     b.add_argument("--epsg", type=int,
                    help="EPSG code (instead of --origin)")
     b.add_argument("--easting", type=float,
