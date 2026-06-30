@@ -65,6 +65,13 @@ class DemSampler:
         self.H, self.W = dem.shape
         self.stats = DrapeStats()
 
+    @property
+    def max_xy(self) -> tuple[float, float]:
+        """Local-meter extent of the DEM rectangle: (max_x, max_y). Matches the
+        terrain frame (SW corner at 0,0; build_grid_mesh maps the far corner to
+        (W-1)*res_x, (H-1)*res_y)."""
+        return ((self.W - 1) * self.res_x, (self.H - 1) * self.res_y)
+
     @classmethod
     def from_tif(cls, path: str | Path) -> "DemSampler":
         """Open a local-frame dem.tif. Per-axis resolution comes from the

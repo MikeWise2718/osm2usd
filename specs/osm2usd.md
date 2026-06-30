@@ -289,12 +289,16 @@ repos are local.
 
 ## Open questions (resolve at implementation)
 
-- **Off-DEM spill:** OSM bbox X/Y runs −1750..7778 × −849..9676 vs. the
-  terrain's 0..6000 × 0..9000 — the 3.4% off-DEM ways sit at/beyond the
-  bbox edge (clamped in Z, real X/Y kept), so some overlay hangs past the
-  terrain. Options: a `--crop-to-dem` flag in osm2usd, tighten the overpy
-  query bbox, or accept the spill. (Was "clamp to edge vs drop vs flat-z";
-  clamp is what shipped, but the X/Y spill is the visible side effect.)
+- **Off-DEM spill:** ~~Options: a `--crop-to-dem` flag, tighten the query
+  bbox, or accept the spill.~~ **RESOLVED: `--crop-to-dem` shipped** (opt-in;
+  see `crop.py`). Overpass returns complete ways even when only partly in the
+  query bbox, so long features (Kalahari's 4x4 trails, primary roads) trail far
+  off-scene and the DEM sampler edge-clamps the tails → high clamp rate +
+  streaks to corners (Kalahari hit 23% without it). With `--crop-to-dem`,
+  roads are split into the maximal in-DEM runs (boundary-interpolated, so a road
+  that exits and re-enters becomes multiple ribbons, no line across the gap) and
+  buildings with any vertex outside are dropped whole. Default off (Messel's
+  3.4% spill is tolerable; Kalahari builds pass `--crop-to-dem`).
 - **Building base z:** min vs. mean of footprint samples (leaning min, so
   no corner floats above ground; revisit on sloped sites).
 - **Road geometry:** flat ribbons vs. BasisCurves (leaning ribbons).
