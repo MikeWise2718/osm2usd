@@ -36,6 +36,18 @@ class BuildOptions:
 
 
 @dataclass
+class PointMarker:
+    """One point rendered as its own named prim (not merged), so it's
+    individually pickable and re-baseable. `base_z` is the draped ground z at the
+    marker (the viewer needs it to keep the pin on the exaggerated terrain)."""
+    cls: str
+    name: str
+    idx: int
+    acc: "geometry.MeshAccumulator"
+    base_z: float
+
+
+@dataclass
 class BuildResult:
     out_path: Path
     n_buildings: int = 0
@@ -108,9 +120,6 @@ def build_stage(
     bld_acc: dict[str, geometry.MeshAccumulator] = defaultdict(
         geometry.MeshAccumulator
     )
-    water_acc: dict[str, geometry.MeshAccumulator] = defaultdict(
-        geometry.MeshAccumulator
-    )
 
     # When cropping, clip to the DEM rectangle in local meters (only meaningful
     # with a real DEM; FlatSampler has no bounds).
@@ -173,7 +182,13 @@ def build_stage(
     # Points -> draped markers (e.g. waterholes/boreholes). overpy points carry
     # {name, kind, lat, lng}; class group derives from `kind` (borehole/well/
     # spring/... -> "waterhole"). Markers are oversized navigation pins.
-    for pt in osm_json.get("points", []):
+    #
+    # Each point becomes its OWN named prim (not merged) so it is individually
+    # pickable (hover/click -> name tooltips) and the viewer can re-base each
+    # marker onto the exaggerated terrain (a point has no real height, so it must
+    # not stretch). 49 markers is cheap to keep separate; ways stay merged.
+    markers: list[PointMarker] = []
+    for idx, pt in enumerate(osm_json.get("points", [])):
         try:
             lat = float(pt["lat"])
             lon = float(pt.get("lng", pt.get("lon")))
@@ -186,13 +201,18 @@ def build_stage(
             continue
         cls = _point_class(pt)
         base = sampler.sample(x, y)
+        acc = geometry.MeshAccumulator()
         if geometry.add_marker(
-            water_acc[cls], x, y, base, opts.marker_radius, opts.marker_height
+            acc, x, y, base, opts.marker_radius, opts.marker_height
         ):
+            markers.append(PointMarker(
+                cls=cls, name=str(pt.get("name") or ""), idx=idx,
+                acc=acc, base_z=base,
+            ))
             result.n_points += 1
             _track_z(result, [base, base + opts.marker_height])
 
-    _author(out_path, origin, road_acc, bld_acc, water_acc, result)
+    _author(out_path, origin, road_acc, bld_acc, markers, result)
     result.pct_off_dem = sampler.stats.pct_clamped
     if result.z_min == float("inf"):
         result.z_min = result.z_max = 0.0
@@ -207,7 +227,7 @@ def _track_z(result: BuildResult, zs: list[float]) -> None:
             result.z_max = z
 
 
-def _author(out_path, origin, road_acc, bld_acc, water_acc, result) -> None:
+def _author(out_path, origin, road_acc, bld_acc, markers, result) -> None:
     stage = Usd.Stage.CreateNew(str(out_path))
     stage.SetMetadata("metersPerUnit", 1.0)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -221,22 +241,47 @@ def _author(out_path, origin, road_acc, bld_acc, water_acc, result) -> None:
     UsdGeom.Scope.Define(stage, "/World/OSM/Materials")
     overlay_paths: list[str] = []
 
+    # Roads + buildings: one merged mesh per class group (draw-call sanity).
     for family, accs, parent in (
         ("Roads", road_acc, roads_path),
         ("Buildings", bld_acc, blds_path),
-        ("Water", water_acc, water_path),
     ):
         for cls, acc in sorted(accs.items()):
             prim = group.define_group_mesh(stage, parent, cls, acc)
             if prim is None:
                 continue
-            mat = materials.define_material(
-                stage, "/World/OSM/Materials", cls
-            )
-            materials.bind(prim, mat)
-            n_tris = len(acc.face_vertex_counts)
-            result.per_class[f"{family}/{cls}"] = n_tris
+            materials.bind(prim, materials.define_material(
+                stage, "/World/OSM/Materials", cls))
+            result.per_class[f"{family}/{cls}"] = len(acc.face_vertex_counts)
             overlay_paths.append(str(prim.GetPath()))
+
+    # Water: one NAMED prim per point under /World/OSM/Water/<class>/<safe_name>,
+    # so each is individually pickable (name tooltips) and re-baseable (the viewer
+    # keeps the pin on the exaggerated terrain via per-marker base_z). The class
+    # group prim stays a Scope so the visibility tab's /World/OSM/Water/<class>
+    # toggle hides them all via ancestor invisibility.
+    used_names: dict[str, set] = {}
+    for mk in markers:
+        cls_scope = f"{water_path}/{mk.cls}"
+        UsdGeom.Scope.Define(stage, cls_scope)
+        seen = used_names.setdefault(mk.cls, set())
+        leaf = group.unique_prim_name(mk.name, mk.idx, seen)
+        prim = group.define_named_mesh(stage, cls_scope, leaf, mk.acc)
+        if prim is None:
+            continue
+        # Per-marker metadata: the display name + the draped ground z (the viewer
+        # re-bases the pin onto exaggerated terrain using base_z).
+        if mk.name:
+            prim.SetCustomDataByKey("osm2usd:name", mk.name)
+        prim.SetCustomDataByKey("osm2usd:base_z", float(mk.base_z))
+        materials.bind(prim, materials.define_material(
+            stage, "/World/OSM/Materials", mk.cls))
+        result.per_class[f"Water/{mk.cls}"] = (
+            result.per_class.get(f"Water/{mk.cls}", 0) + len(mk.acc.face_vertex_counts)
+        )
+    # The toggle target is the class scope, not each marker (keep overlay_groups tidy).
+    for cls in sorted(used_names):
+        overlay_paths.append(f"{water_path}/{cls}")
 
     # Self-describing: list the overlay subtree paths so the viewer can
     # auto-discover the toggleable groups.

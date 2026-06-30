@@ -56,15 +56,43 @@ def _safe_prim_name(name: str) -> str:
     return s
 
 
+def unique_prim_name(name: str, idx: int, seen: set) -> str:
+    """A valid, collision-free USD leaf name for a point marker.
+
+    Derives from the OSM name (sanitized); falls back to wh_<idx> when unnamed.
+    Disambiguates duplicates (many Kgalagadi holes share names) with a numeric
+    suffix. Records the result in `seen`."""
+    base = _safe_prim_name(name) if name else f"wh_{idx}"
+    candidate = base
+    k = 2
+    while candidate in seen:
+        candidate = f"{base}_{k}"
+        k += 1
+    seen.add(candidate)
+    return candidate
+
+
+def define_named_mesh(
+    stage: Usd.Stage, parent_path: str, leaf_name: str, acc: MeshAccumulator
+) -> Usd.Prim | None:
+    """Author a mesh at <parent_path>/<leaf_name> from an accumulator (leaf name
+    already sanitized/unique). Returns the prim, or None if the acc is empty."""
+    return _author_mesh(stage, f"{parent_path}/{leaf_name}", acc)
+
+
 def define_group_mesh(
     stage: Usd.Stage, parent_path: str, class_group: str, acc: MeshAccumulator
 ) -> Usd.Prim | None:
     """Author one merged mesh at <parent_path>/<class_group> from an
     accumulator. Returns the mesh prim, or None if the accumulator is empty."""
+    return _author_mesh(stage, f"{parent_path}/{_safe_prim_name(class_group)}", acc)
+
+
+def _author_mesh(
+    stage: Usd.Stage, path: str, acc: MeshAccumulator
+) -> Usd.Prim | None:
     if acc.is_empty:
         return None
-    name = _safe_prim_name(class_group)
-    path = f"{parent_path}/{name}"
     mesh = UsdGeom.Mesh.Define(stage, path)
     mesh.CreatePointsAttr(
         Vt.Vec3fArray([tuple(map(float, p)) for p in acc.points])
