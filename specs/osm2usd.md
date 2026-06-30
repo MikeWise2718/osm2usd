@@ -140,13 +140,23 @@ visibility tab expects:
 ```
 /World/OSM
 ├── Roads/{motorway,street,living,service,trail,hwother}
-└── Buildings/{office,residency,parking,retail,public,farm,school,religion,ruin,bldother}
+├── Buildings/{office,residency,parking,retail,public,farm,school,religion,ruin,bldother}
+└── Water/{waterhole}          # from OSM *points* (boreholes/wells/springs)
 ```
 
 (14 class groups + 2 catch-alls — the taxonomy travels in the JSON's
 `class_groups`, so osm2usd doesn't hardcode the bucket list; it groups by
 whatever `class_group` values appear, slotting Roads vs Buildings by the
 `thing` field.)
+
+**Points → markers (Water family).** Besides `ways`, the JSON's `points`
+(`{name, kind, lat, lng}`) become **draped octagonal-pillar markers** under
+`/World/OSM/Water/<class>` (boreholes/wells/springs → `waterhole`, blue). At a
+217×265 km scene viewed from kilometres up a real borehole is sub-pixel, so the
+markers are **deliberately oversized navigation pins** — size via
+`--marker-radius`/`--marker-height` (default 1000 m / 2000 m). The Water family
+flows through the same merged-mesh + material + `osm2usd:overlay_groups`
+machinery, so the viewer's visibility tab toggles it like any other group.
 
 ### 5. Materials
 

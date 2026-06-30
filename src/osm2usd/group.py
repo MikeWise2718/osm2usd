@@ -87,11 +87,14 @@ def define_group_mesh(
     return mesh.GetPrim()
 
 
-def ensure_scopes(stage: Usd.Stage) -> tuple[str, str, str]:
-    """Define /World/OSM and the Roads/Buildings scopes. Returns their paths."""
+def ensure_scopes(stage: Usd.Stage) -> tuple[str, str, str, str]:
+    """Define /World/OSM and the Roads/Buildings/Water scopes. Returns their
+    paths (osm_root, roads, buildings, water)."""
     UsdGeom.Scope.Define(stage, "/World/OSM")
     roads = "/World/OSM/Roads"
     buildings = "/World/OSM/Buildings"
+    water = "/World/OSM/Water"
     UsdGeom.Scope.Define(stage, roads)
     UsdGeom.Scope.Define(stage, buildings)
-    return "/World/OSM", roads, buildings
+    UsdGeom.Scope.Define(stage, water)
+    return "/World/OSM", roads, buildings, water

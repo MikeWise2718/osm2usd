@@ -13,6 +13,10 @@ import math
 # A small accumulating mesh: points are (x, y, z) tuples; faces index into them.
 Point = tuple[float, float, float]
 
+# Marker footprint sides (octagonal prism). 8 reads as round enough from the air
+# while staying trivial geometry across hundreds of points.
+MARKER_SIDES = 8
+
 
 class MeshAccumulator:
     """Collects points + triangle indices across many ways for one class group,
@@ -221,3 +225,50 @@ def add_road_ribbon(
         acc.add_quad(left[i], right[i], right[i + 1], left[i + 1])
         emitted = True
     return emitted
+
+
+# --------------------------------------------------------------------------- #
+# Point markers
+# --------------------------------------------------------------------------- #
+
+def add_marker(
+    acc: MeshAccumulator,
+    x: float,
+    y: float,
+    base_z: float,
+    radius: float,
+    height: float,
+) -> bool:
+    """Add an octagonal pillar marker centered at (x, y), draped on base_z.
+
+    A regular MARKER_SIDES-gon footprint of the given radius, extruded straight
+    up from base_z to base_z + height: walls (one quad per side) + a top cap
+    (fan of triangles). Used to make OSM *points* (e.g. waterholes/boreholes)
+    visible at scene scale -- deliberately oversized navigation pins, not
+    realistic geometry. Returns True (always emits).
+    """
+    top_z = base_z + height
+    ring = [
+        (
+            x + radius * math.cos(2.0 * math.pi * k / MARKER_SIDES),
+            y + radius * math.sin(2.0 * math.pi * k / MARKER_SIDES),
+        )
+        for k in range(MARKER_SIDES)
+    ]
+    n = len(ring)
+
+    # Top cap as a triangle fan around vertex 0.
+    for i in range(1, n - 1):
+        a = (ring[0][0], ring[0][1], top_z)
+        b = (ring[i][0], ring[i][1], top_z)
+        c = (ring[i + 1][0], ring[i + 1][1], top_z)
+        acc.add_triangle(a, b, c)
+
+    # Walls: one quad per side, base_z -> top_z.
+    for i in range(n):
+        x0, y0 = ring[i]
+        x1, y1 = ring[(i + 1) % n]
+        acc.add_quad(
+            (x0, y0, base_z), (x1, y1, base_z), (x1, y1, top_z), (x0, y0, top_z)
+        )
+    return True
