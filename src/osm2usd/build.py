@@ -21,8 +21,8 @@ LEVEL_HEIGHT_DEFAULT = 3.0
 DEFAULT_BLD_HEIGHT = 6.0
 
 
-MARKER_RADIUS_DEFAULT = 1000.0   # meters; oversized so points show at scene scale
-MARKER_HEIGHT_DEFAULT = 2000.0
+MARKER_RADIUS_DEFAULT = 300.0    # meters; oversized so points show at scene scale
+MARKER_HEIGHT_DEFAULT = 1500.0   # a slim, tall pin reads better than a fat block
 
 
 @dataclass

@@ -54,11 +54,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="clip geometry to the DEM bbox: split roads at the "
                         "boundary and drop buildings/points outside it (avoids "
                         "edge-clamp streaks from ways that trail off-scene)")
-    b.add_argument("-mr", "--marker-radius", type=float, default=1000.0,
-                   help="point-marker footprint radius m (default 1000; "
+    b.add_argument("-mr", "--marker-radius", type=float, default=300.0,
+                   help="point-marker footprint radius m (default 300; "
                         "oversized so points show at scene scale)")
-    b.add_argument("-mh", "--marker-height", type=float, default=2000.0,
-                   help="point-marker pillar height m (default 2000)")
+    b.add_argument("-mh", "--marker-height", type=float, default=1500.0,
+                   help="point-marker pillar height m (default 1500)")
     return p
 
 

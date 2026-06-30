@@ -44,6 +44,18 @@ def test_hierarchy_and_counts(osm_json, origin_json, dem_tif, tmp_path):
     assert len(office.GetFaceVertexCountsAttr().Get()) == 10  # cap+walls
 
 
+def test_osm_root_is_xformable(osm_json, origin_json, dem_tif, tmp_path):
+    """/World/OSM must be an Xform (not a Scope) so the viewer can author a
+    height-exaggeration scale op on it to make the overlay track the terrain."""
+    from pxr import UsdGeom
+    out = tmp_path / "xform_osm.usd"
+    _build(osm_json, origin_json, DemSampler.from_tif(dem_tif), out)
+    stage = Usd.Stage.Open(str(out))
+    osm = stage.GetPrimAtPath("/World/OSM")
+    assert osm.GetTypeName() == "Xform"
+    assert bool(UsdGeom.Xformable(osm))  # can carry xformOps
+
+
 def test_stage_conventions(osm_json, origin_json, dem_tif, tmp_path):
     out = tmp_path / "conv_osm.usd"
     _build(osm_json, origin_json, DemSampler.from_tif(dem_tif), out)
