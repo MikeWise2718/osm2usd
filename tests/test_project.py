@@ -51,3 +51,99 @@ def test_project_many_matches_single(origin_json):
 def test_project_many_empty(origin_json):
     proj = Projector(Origin.from_json(origin_json))
     assert proj.project_many([]) == []
+
+
+# --------------------------------------------------------------------------
+# Degree-grid mode (Kalahari): linear deg->m remap, no pyproj.
+# --------------------------------------------------------------------------
+
+import json
+
+import pytest
+
+from osm2usd.project import (
+    DegreeGridProjector,
+    MODE_DEGREE_GRID,
+    MODE_UTM,
+    make_projector,
+)
+
+# A synthetic degree-grid origin matching Kalahari's origin.json shape.
+# extent W,S,E,N = 20,-26,22,-24  -> 2 deg wide, 2 deg tall.
+# width 200000 m, height 300000 m  -> 100000 m/deg lon, 150000 m/deg lat.
+_DG = {
+    "source_crs": "EPSG:4148",
+    "extent_deg": [20.0, -26.0, 22.0, -24.0],
+    "sw_lon": 20.0,
+    "sw_lat": -26.0,
+    "width_m": 200000.0,
+    "height_m": 300000.0,
+}
+
+
+def _write_dg(tmp_path):
+    p = tmp_path / "kal_origin.json"
+    p.write_text(json.dumps(_DG), encoding="utf-8")
+    return p
+
+
+def test_origin_from_json_detects_degree_grid(tmp_path):
+    o = Origin.from_json(_write_dg(tmp_path))
+    assert o.mode == MODE_DEGREE_GRID
+    assert o.sw_lon == 20.0 and o.sw_lat == -26.0
+    assert o.extent_w_deg == 2.0 and o.extent_h_deg == 2.0
+    assert o.width_m == 200000.0 and o.height_m == 300000.0
+
+
+def test_degree_grid_sw_corner_is_origin(tmp_path):
+    proj = make_projector(Origin.from_json(_write_dg(tmp_path)))
+    assert isinstance(proj, DegreeGridProjector)
+    x, y = proj.project(-26.0, 20.0)   # SW corner -> (0, 0)
+    assert abs(x) < 1e-6 and abs(y) < 1e-6
+
+
+def test_degree_grid_known_points(tmp_path):
+    proj = make_projector(Origin.from_json(_write_dg(tmp_path)))
+    # (lat, lon) -> (x, y).  m/deg lon = 100000, m/deg lat = 150000.
+    known = [
+        ((-26.0, 21.0), (100000.0, 0.0)),       # +1 deg lon
+        ((-25.0, 20.0), (0.0, 150000.0)),       # +1 deg lat (north) -> +Y
+        ((-24.0, 22.0), (200000.0, 300000.0)),  # NE corner
+        ((-26.0, 19.5), (-50000.0, 0.0)),       # WEST of SW corner -> negative X
+    ]
+    for (lat, lon), (ex, ey) in known:
+        x, y = proj.project(lat, lon)
+        assert abs(x - ex) < 1e-3, f"x {x} != {ex}"
+        assert abs(y - ey) < 1e-3, f"y {y} != {ey}"
+
+
+def test_degree_grid_y_is_north_up(tmp_path):
+    """Higher latitude must give larger Y (north up)."""
+    proj = make_projector(Origin.from_json(_write_dg(tmp_path)))
+    _, y_south = proj.project(-25.9, 21.0)
+    _, y_north = proj.project(-24.1, 21.0)
+    assert y_north > y_south
+
+
+def test_degree_grid_project_many_matches_single(tmp_path):
+    proj = make_projector(Origin.from_json(_write_dg(tmp_path)))
+    latlons = [(-26.0, 21.0), (-25.0, 20.0), (-24.0, 22.0), (-26.0, 19.5)]
+    many = proj.project_many(latlons)
+    for (lat, lon), m in zip(latlons, many):
+        s = proj.project(lat, lon)
+        assert abs(s[0] - m[0]) < 1e-9 and abs(s[1] - m[1]) < 1e-9
+    assert proj.project_many([]) == []
+
+
+def test_origin_from_json_rejects_unknown_shape(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"foo": 1, "bar": 2}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        Origin.from_json(bad)
+
+
+def test_make_projector_dispatches_on_mode(tmp_path, origin_json):
+    utm = make_projector(Origin.from_json(origin_json))
+    dg = make_projector(Origin.from_json(_write_dg(tmp_path)))
+    assert type(utm).__name__ == "UtmProjector"
+    assert type(dg).__name__ == "DegreeGridProjector"

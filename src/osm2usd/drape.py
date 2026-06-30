@@ -48,27 +48,39 @@ class DemSampler:
     is high.
     """
 
-    def __init__(self, dem: np.ndarray, res_m: float):
+    def __init__(self, dem: np.ndarray, res_m: float, res_y: float | None = None):
+        """DEM array in the local frame.
+
+        ``res_m`` is the X (column) pixel size in local meters; ``res_y`` is the
+        Y (row) size. For a square grid (Messel, 1 m/px) leave ``res_y`` None and
+        it mirrors ``res_m``. For an anisotropic degree grid (Kalahari: ~5.04 m
+        in X, ~5.54 m in Y) pass both so the row mapping uses the right pitch.
+        """
         if dem.ndim != 2:
             raise ValueError(f"DEM must be 2D, got shape {dem.shape}")
         self.dem = dem
-        self.res_m = float(res_m)
+        self.res_m = float(res_m)                 # X pixel size (back-compat name)
+        self.res_x = float(res_m)
+        self.res_y = float(res_y) if res_y is not None else float(res_m)
         self.H, self.W = dem.shape
         self.stats = DrapeStats()
 
     @classmethod
     def from_tif(cls, path: str | Path) -> "DemSampler":
-        """Open a local-frame dem.tif. Resolution comes from the transform's
-        pixel size (prep_rasters writes 1 m/px); crs is expected to be None."""
+        """Open a local-frame dem.tif. Per-axis resolution comes from the
+        transform (a = X pixel width, e = Y pixel height; e is negative for a
+        north-up raster). prep_rasters writes 1 m/px square for Messel and an
+        anisotropic deg-derived pitch for Kalahari; crs is expected to be None."""
         with rasterio.open(path) as src:
             band = src.read(1)
-            res_m = abs(src.transform.a)  # pixel width in local meters
-        return cls(np.asarray(band, dtype=np.float64), res_m)
+            res_x = abs(src.transform.a)  # X pixel width in local meters
+            res_y = abs(src.transform.e)  # Y pixel height in local meters
+        return cls(np.asarray(band, dtype=np.float64), res_x, res_y)
 
     def _cell(self, x: float, y: float) -> tuple[int, int]:
         """(x, y) local meters -> (row, col), clamped to the DEM bounds."""
-        col = int(round(x / self.res_m))
-        row = (self.H - 1) - int(round(y / self.res_m))
+        col = int(round(x / self.res_x))
+        row = (self.H - 1) - int(round(y / self.res_y))
         c = max(0, min(self.W - 1, col))
         r = max(0, min(self.H - 1, row))
         if c != col or r != row:

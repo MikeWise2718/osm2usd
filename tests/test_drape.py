@@ -53,3 +53,28 @@ def test_flat_sampler():
     assert f.sample(5, 5) == 0.0
     assert f.base_z([(1, 1), (2, 2)]) == 0.0
     assert f.sample_many([(0, 0), (1, 1)]) == [0.0, 0.0]
+
+
+def test_anisotropic_res_maps_correct_cell():
+    """Degree-grid DEMs have res_x != res_y. The row mapping must use res_y and
+    the col mapping res_x, or features creep along the mismatched axis."""
+    # 10x10 DEM; encode the row index into z so we can detect which row was hit.
+    dem = np.zeros((10, 10), dtype=np.float64)
+    for r in range(10):
+        dem[r, :] = float(r)
+    res_x, res_y = 4.0, 7.0
+    s = DemSampler(dem, res_x, res_y)
+    assert s.res_x == 4.0 and s.res_y == 7.0
+    # y = 0 -> bottom row = row 9 (H-1) -> z == 9.
+    assert s.sample(0.0, 0.0) == 9.0
+    # y = 2*res_y = 14 -> row = 9 - round(14/7) = 9 - 2 = 7 -> z == 7.
+    assert s.sample(0.0, 14.0) == 7.0
+    # x uses res_x: x = 3*res_x = 12 -> col 3 (z constant across cols, still row-based).
+    assert s.sample(12.0, 0.0) == 9.0
+
+
+def test_isotropic_back_compat():
+    """A single res still works (res_y mirrors res_x) -- the Messel path."""
+    dem = np.zeros((10, 10), dtype=np.float64)
+    s = DemSampler(dem, 1.0)
+    assert s.res_x == 1.0 and s.res_y == 1.0 and s.res_m == 1.0
