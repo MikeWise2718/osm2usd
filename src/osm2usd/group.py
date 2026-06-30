@@ -89,8 +89,12 @@ def define_group_mesh(
 
 def ensure_scopes(stage: Usd.Stage) -> tuple[str, str, str, str]:
     """Define /World/OSM and the Roads/Buildings/Water scopes. Returns their
-    paths (osm_root, roads, buildings, water)."""
-    UsdGeom.Scope.Define(stage, "/World/OSM")
+    paths (osm_root, roads, buildings, water).
+
+    /World/OSM is an **Xform** (not a Scope) so the viewer can author a single
+    height-exaggeration scale op on it, moving the whole overlay to track the
+    exaggerated terrain. The per-family children stay Scopes (pure grouping)."""
+    UsdGeom.Xform.Define(stage, "/World/OSM")
     roads = "/World/OSM/Roads"
     buildings = "/World/OSM/Buildings"
     water = "/World/OSM/Water"
