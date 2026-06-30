@@ -7,6 +7,7 @@ parameter; this module never imports a scene repo and never hardcodes Messel.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,20 @@ class BuildOptions:
     crop_to_dem: bool = False  # split roads / drop buildings outside the DEM bbox
     marker_radius: float = MARKER_RADIUS_DEFAULT  # point-marker footprint radius (m)
     marker_height: float = MARKER_HEIGHT_DEFAULT  # point-marker pillar height (m)
+
+
+@dataclass
+class NamedWay:
+    """A real-named road/building authored as its OWN named prim (pickable, so a
+    click shows its name), instead of being merged into the per-class mesh.
+    `family` is 'Roads' or 'Buildings'; base_z is the draped ground z (markers
+    need it; ways carry it for symmetry / future re-basing)."""
+    family: str
+    cls: str
+    name: str
+    idx: int
+    acc: "geometry.MeshAccumulator"
+    base_z: float
 
 
 @dataclass
@@ -87,6 +102,29 @@ def _way_nodes(way: dict) -> list[tuple[float, float]]:
     return out
 
 
+# overpy emits a `name` for every way, but most are synthetic placeholders it
+# generates when OSM had none: a class-word (or "yes"/"house"/...) + digits, e.g.
+# "track001", "service002", "unclassified010", "yes007", "apartments003". A real
+# name ("Nossob Road", "Rooiputs Camp Site No. 1") is anything that ISN'T that
+# pattern. Only real-named ways get split into their own pickable prim; the rest
+# stay in the merged per-class mesh (draw-call sanity).
+_SYNTHETIC_NAME = re.compile(
+    r"^(track|service|unclassified|primary|secondary|tertiary|residential|"
+    r"living|footway|path|cycleway|pedestrian|step|yes|building|house|roof|"
+    r"apartments|appartments|terrace|carport|garage|garages|hangar|"
+    r"water_storage|manufacture|hwother|bldother|commercial)\d*$",
+    re.IGNORECASE,
+)
+
+
+def real_name(way: dict) -> str | None:
+    """The way's genuine OSM name, or None if absent/synthetic placeholder."""
+    n = (way.get("name") or "").strip()
+    if not n or _SYNTHETIC_NAME.match(n):
+        return None
+    return n
+
+
 def _point_class(pt: dict) -> str:
     """Class-group bucket for an overpy point. Boreholes/wells/springs/water
     points all bucket to 'waterhole' (blue marker, /World/OSM/Water/waterhole);
@@ -127,8 +165,12 @@ def build_stage(
     if opts.crop_to_dem and isinstance(sampler, DemSampler):
         crop_box = sampler.max_xy
 
+    # Real-named ways are collected as their own pickable prims; unnamed ways
+    # are merged into the per-class meshes above.
+    named_ways: list[NamedWay] = []
+
     ways = osm_json.get("ways", [])
-    for way in ways:
+    for idx, way in enumerate(ways):
         latlons = _way_nodes(way)
         if len(latlons) < 2:
             result.n_skipped += 1
@@ -136,6 +178,7 @@ def build_stage(
         xy = projector.project_many(latlons)
         thing = way.get("thing", "")
         cls = way.get("class_group") or "unknown"
+        nm = real_name(way)
 
         if group.is_road(thing):
             width = group.road_width(cls, opts.road_width_scale)
@@ -149,15 +192,25 @@ def build_stage(
             if not runs:
                 result.n_cropped += 1
                 continue
+            # Named road -> its own accumulator (own prim); else the class mesh.
+            own = geometry.MeshAccumulator() if nm else None
+            target = own if own is not None else road_acc[cls]
             emitted_any = False
+            base_z = None
             for run in runs:
                 zs = sampler.sample_many(run)
                 xyz = [(x, y, z) for (x, y), z in zip(run, zs)]
-                if geometry.add_road_ribbon(road_acc[cls], xyz, width):
+                if geometry.add_road_ribbon(target, xyz, width):
                     emitted_any = True
                     _track_z(result, zs)
+                    if base_z is None and zs:
+                        base_z = min(zs)
             if emitted_any:
                 result.n_roads += 1
+                if own is not None:
+                    named_ways.append(NamedWay(
+                        family="Roads", cls=cls, name=nm, idx=idx,
+                        acc=own, base_z=base_z or 0.0))
             else:
                 result.n_skipped += 1
         else:  # building
@@ -173,9 +226,15 @@ def build_stage(
                 continue
             base = sampler.base_z(xy)
             height = building_height(way, opts)
-            if geometry.add_building(bld_acc[cls], xy, base, height):
+            own = geometry.MeshAccumulator() if nm else None
+            target = own if own is not None else bld_acc[cls]
+            if geometry.add_building(target, xy, base, height):
                 result.n_buildings += 1
                 _track_z(result, [base, base + height])
+                if own is not None:
+                    named_ways.append(NamedWay(
+                        family="Buildings", cls=cls, name=nm, idx=idx,
+                        acc=own, base_z=base))
             else:
                 result.n_skipped += 1
 
@@ -212,7 +271,7 @@ def build_stage(
             result.n_points += 1
             _track_z(result, [base, base + opts.marker_height])
 
-    _author(out_path, origin, road_acc, bld_acc, markers, result)
+    _author(out_path, origin, road_acc, bld_acc, markers, named_ways, result)
     result.pct_off_dem = sampler.stats.pct_clamped
     if result.z_min == float("inf"):
         result.z_min = result.z_max = 0.0
@@ -227,7 +286,7 @@ def _track_z(result: BuildResult, zs: list[float]) -> None:
             result.z_max = z
 
 
-def _author(out_path, origin, road_acc, bld_acc, markers, result) -> None:
+def _author(out_path, origin, road_acc, bld_acc, markers, named_ways, result) -> None:
     stage = Usd.Stage.CreateNew(str(out_path))
     stage.SetMetadata("metersPerUnit", 1.0)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -241,19 +300,59 @@ def _author(out_path, origin, road_acc, bld_acc, markers, result) -> None:
     UsdGeom.Scope.Define(stage, "/World/OSM/Materials")
     overlay_paths: list[str] = []
 
-    # Roads + buildings: one merged mesh per class group (draw-call sanity).
+    def _mat(cls):
+        return materials.define_material(stage, "/World/OSM/Materials", cls)
+
+    # Named ways grouped by (family, class) so a class with named features can
+    # host them as children alongside the merged-remainder mesh.
+    named_by = defaultdict(list)
+    for nw in named_ways:
+        named_by[(nw.family, nw.cls)].append(nw)
+
+    # Roads + buildings: unnamed features merge into one mesh per class; real-
+    # named features get their own pickable child prim. A class that has named
+    # features becomes a Scope holding <cls>/_merged (remainder) + <cls>/<name>;
+    # a class with none stays a flat <cls> Mesh (back-compat). Either way the
+    # visibility toggle path /World/OSM/<family>/<cls> still hides everything
+    # under it via ancestor invisibility.
     for family, accs, parent in (
         ("Roads", road_acc, roads_path),
         ("Buildings", bld_acc, blds_path),
     ):
-        for cls, acc in sorted(accs.items()):
-            prim = group.define_group_mesh(stage, parent, cls, acc)
-            if prim is None:
-                continue
-            materials.bind(prim, materials.define_material(
-                stage, "/World/OSM/Materials", cls))
-            result.per_class[f"{family}/{cls}"] = len(acc.face_vertex_counts)
-            overlay_paths.append(str(prim.GetPath()))
+        classes = set(accs) | {c for (f, c) in named_by if f == family}
+        for cls in sorted(classes):
+            acc = accs.get(cls)
+            nws = named_by.get((family, cls), [])
+            tris = 0
+            if nws:
+                cls_scope = f"{parent}/{group._safe_prim_name(cls)}"
+                UsdGeom.Scope.Define(stage, cls_scope)
+                # merged remainder (unnamed features of this class)
+                if acc is not None and not acc.is_empty:
+                    mprim = group.define_named_mesh(stage, cls_scope, "_merged", acc)
+                    if mprim is not None:
+                        materials.bind(mprim, _mat(cls))
+                        tris += len(acc.face_vertex_counts)
+                # named features as pickable children
+                seen: set = set()
+                for nw in nws:
+                    leaf = group.unique_prim_name(nw.name, nw.idx, seen)
+                    p = group.define_named_mesh(stage, cls_scope, leaf, nw.acc)
+                    if p is None:
+                        continue
+                    p.SetCustomDataByKey("osm2usd:name", nw.name)
+                    p.SetCustomDataByKey("osm2usd:base_z", float(nw.base_z))
+                    materials.bind(p, _mat(cls))
+                    tris += len(nw.acc.face_vertex_counts)
+                overlay_paths.append(cls_scope)
+            else:
+                prim = group.define_group_mesh(stage, parent, cls, acc)
+                if prim is None:
+                    continue
+                materials.bind(prim, _mat(cls))
+                tris = len(acc.face_vertex_counts)
+                overlay_paths.append(str(prim.GetPath()))
+            result.per_class[f"{family}/{cls}"] = tris
 
     # Water: one NAMED prim per point under /World/OSM/Water/<class>/<safe_name>,
     # so each is individually pickable (name tooltips) and re-baseable (the viewer

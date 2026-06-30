@@ -161,6 +161,31 @@ def test_points_become_named_waterhole_markers(osm_json, origin_json, dem_tif, t
     assert binding.GetMaterial().GetPrim().IsValid()
 
 
+def test_named_way_becomes_own_prim(osm_json, origin_json, dem_tif, tmp_path):
+    """A road with a REAL name -> its own pickable prim under the class scope
+    (carrying osm2usd:name); synthetic-named ways stay in the merged mesh."""
+    from osm2usd.build import real_name
+    # filter sanity: synthetic vs real
+    assert real_name({"name": "track001"}) is None
+    assert real_name({"name": "yes007"}) is None
+    assert real_name({"name": "Nossob Road"}) == "Nossob Road"
+
+    data = load_osm_json(osm_json)
+    # The fixture's street road: give it a real name; add a synthetic-named one.
+    streets = [w for w in data["ways"] if w.get("class_group") == "street"]
+    assert streets, "fixture has a street way"
+    streets[0]["name"] = "Test Avenue"
+
+    out = tmp_path / "named_osm.usd"
+    build_stage(data, Origin.from_json(origin_json),
+                DemSampler.from_tif(dem_tif), out, BuildOptions())
+    stage = Usd.Stage.Open(str(out))
+    # street is now a Scope holding the named child.
+    named = stage.GetPrimAtPath("/World/OSM/Roads/street/Test_Avenue")
+    assert named.IsValid()
+    assert named.GetCustomData()["osm2usd"]["name"] == "Test Avenue"
+
+
 def test_duplicate_point_names_disambiguated(osm_json, origin_json, dem_tif, tmp_path):
     """Many Kgalagadi holes share names; each must still get a unique prim."""
     data = load_osm_json(osm_json)
